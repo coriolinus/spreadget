@@ -50,7 +50,7 @@ struct BinanceConnection;
 
 #[tonic::async_trait]
 impl ExchangeConnection for BinanceConnection {
-    const EXCHANGE_NAME: &'static str = "binance";
+    const EXCHANGE_NAME: &'static str = "bitstamp";
 
     type Err = Error;
 
