@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+futures = "0.3.21"
 prost = "0.9.0"
 tokio = "1.17.0"
 tokio-tungstenite = "0.17.1"
