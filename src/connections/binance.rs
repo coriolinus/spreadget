@@ -14,20 +14,21 @@
 //!
 //! Note that the symbol for Bitcoin/Etherium is `ethbtc`; this is the reverse of what Bitstamp does.
 
-use crate::{AnonymousLevel, ExchangeConnection, SimpleOrderBook};
+use super::ExchangeConnection;
+use crate::{AnonymousLevel, SimpleOrderBook};
 use futures::{StreamExt, TryStreamExt};
 
 /// Message type for Binance partial book stream.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BookStreamMessage {
+struct Message {
     _last_update_id: usize,
     bids: Vec<AnonymousLevel>,
     asks: Vec<AnonymousLevel>,
 }
 
-impl From<BookStreamMessage> for SimpleOrderBook {
-    fn from(msg: BookStreamMessage) -> Self {
+impl From<Message> for SimpleOrderBook {
+    fn from(msg: Message) -> Self {
         SimpleOrderBook {
             bids: msg.bids.into_iter().map(Into::into).collect(),
             asks: msg.asks.into_iter().map(Into::into).collect(),
@@ -36,7 +37,7 @@ impl From<BookStreamMessage> for SimpleOrderBook {
 }
 
 /// Manage a websocket connection to Binance.
-struct BinanceConnection;
+pub struct BinanceConnection;
 
 #[tonic::async_trait]
 impl ExchangeConnection for BinanceConnection {
@@ -55,9 +56,9 @@ impl ExchangeConnection for BinanceConnection {
             stream
                 .map::<Result<SimpleOrderBook, Self::Err>, _>(|maybe_message| {
                     // just pass errors along
-                    let message = maybe_message?.into_text()?;
-                    let bsm: BookStreamMessage = serde_json::from_str(&message)?;
-                    Ok(bsm.into())
+                    let message_text = maybe_message?.into_text()?;
+                    let message: Message = serde_json::from_str(&message_text)?;
+                    Ok(message.into())
                 })
                 .map_err(Into::into),
         ))
