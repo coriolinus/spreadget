@@ -1,115 +1,31 @@
+//! Connection implementation for Binance.
+//!
+//! Binance uses a relatively simple protocol: we can register for the desired stream
+//! and stream protocol by passing parameters to the endpoint, and then (as long as we
+//! are registered only for a single stream) we know that all messages will be of a particular type.
+//! The stream handler therefore just has to transform those messages appropriately.
+//!
+//! Example data:
+//!
+//! ```json
+//! {"lastUpdateId":5071750763,"bids":[["0.07036500","13.01310000"],["0.07036400","0.10000000"],["0.07036200","1.45170000"],["0.07036000","0.26890000"],["0.07035800","0.15590000"],["0.07035700","1.02620000"],["0.07035600","0.10000000"],["0.07035400","9.44760000"],["0.07035200","0.10150000"],["0.07035000","0.10000000"],["0.07034900","0.62010000"],["0.07034800","0.10000000"],["0.07034600","0.10000000"],["0.07034500","0.01080000"],["0.07034400","0.35240000"],["0.07034300","3.12960000"],["0.07034200","0.12070000"],["0.07034100","0.05130000"],["0.07034000","4.79100000"],["0.07033800","0.10000000"]],"asks":[["0.07036600","6.77250000"],["0.07036700","0.90840000"],["0.07036800","9.41920000"],["0.07036900","1.12060000"],["0.07037000","2.64990000"],["0.07037100","1.26440000"],["0.07037200","0.12240000"],["0.07037300","2.58580000"],["0.07037400","4.24210000"],["0.07037500","0.04240000"],["0.07037600","1.43410000"],["0.07037700","2.96460000"],["0.07037800","0.31060000"],["0.07037900","0.11760000"],["0.07038000","15.76550000"],["0.07038100","12.05310000"],["0.07038200","0.20270000"],["0.07038300","0.12960000"],["0.07038400","1.88930000"],["0.07038500","0.14370000"]]}
+//! {"lastUpdateId":5071750764,"bids":[["0.07036500","13.01310000"],["0.07036400","0.10000000"],["0.07036200","1.45170000"],["0.07036000","0.26890000"],["0.07035800","0.15590000"],["0.07035700","1.02620000"],["0.07035600","0.10000000"],["0.07035400","9.44760000"],["0.07035200","0.10150000"],["0.07035000","0.10000000"],["0.07034800","0.10000000"],["0.07034600","0.10000000"],["0.07034500","0.01080000"],["0.07034400","0.35240000"],["0.07034300","3.12960000"],["0.07034200","0.12070000"],["0.07034100","0.05130000"],["0.07034000","4.79100000"],["0.07033800","0.10000000"],["0.07033600","0.10000000"]],"asks":[["0.07036600","6.77250000"],["0.07036700","0.90840000"],["0.07036800","9.41920000"],["0.07036900","1.12060000"],["0.07037000","2.64990000"],["0.07037100","1.26440000"],["0.07037200","0.12240000"],["0.07037300","2.58580000"],["0.07037400","4.24210000"],["0.07037500","0.04240000"],["0.07037600","1.43410000"],["0.07037700","2.96460000"],["0.07037800","0.31060000"],["0.07037900","0.11760000"],["0.07038000","15.76550000"],["0.07038100","12.05310000"],["0.07038200","0.20270000"],["0.07038300","0.12960000"],["0.07038400","1.88930000"],["0.07038500","0.14370000"]]}
+//! ```
+
 use crate::{AnonymousLevel, ExchangeConnection, SimpleOrderBook};
 use futures::{StreamExt, TryStreamExt};
-use serde::{
-    de::{Error as _, SeqAccess},
-    Deserialize,
-};
-
-/// This helper type exists so that we can deserialize a string representation of a number into itself.
-struct StringFloat(f64);
-
-impl<'de> Deserialize<'de> for StringFloat {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = StringFloat;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("string containing a floating point literal")
-            }
-
-            /// In case we get a raw float instead of a string, we can handle it.
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
-                Ok(StringFloat(v))
-            }
-
-            /// In case we get a string, try to parse it as a float.
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                v.parse::<f64>()
-                    .map(StringFloat)
-                    .map_err(|_| E::invalid_value(serde::de::Unexpected::Str(v), &self))
-            }
-        }
-
-        deserializer.deserialize_str(Visitor)
-    }
-}
-
-impl From<StringFloat> for f64 {
-    fn from(sf: StringFloat) -> Self {
-        sf.0
-    }
-}
-
-/// This helper type exists so that we can deserialize a list of a pair of strings as numbers.
-///
-/// Binance uses an odd format for its bids and asks: `bids: [["1.0", "2.0"], ["3.4", "5.6"]]`.
-/// This lets us deserialize that format.
-#[derive(Debug)]
-struct PriceAndQty {
-    price: f64,
-    qty: f64,
-}
-
-impl<'de> Deserialize<'de> for PriceAndQty {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = PriceAndQty;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("list of two numbers")
-            }
-
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut expect_element = |field_name: &'static str| {
-                    seq.next_element::<StringFloat>()?
-                        .ok_or_else(|| A::Error::missing_field(field_name))
-                };
-
-                let price = expect_element("price")?;
-                let qty = expect_element("qty")?;
-
-                if seq.next_element::<StringFloat>()?.is_some() {
-                    return Err(A::Error::invalid_length(3, &self));
-                }
-
-                Ok(PriceAndQty {
-                    price: price.into(),
-                    qty: qty.into(),
-                })
-            }
-        }
-
-        deserializer.deserialize_seq(Visitor)
-    }
-}
 
 /// Message type for Binance partial book stream.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BookDepthStreamMessage {
+pub struct BookStreamMessage {
     _last_update_id: usize,
-    bids: Vec<PriceAndQty>,
-    asks: Vec<PriceAndQty>,
+    bids: Vec<AnonymousLevel>,
+    asks: Vec<AnonymousLevel>,
 }
 
-impl From<PriceAndQty> for AnonymousLevel {
-    fn from(PriceAndQty { price, qty: amount }: PriceAndQty) -> Self {
-        AnonymousLevel { price, amount }
-    }
-}
-
-impl From<BookDepthStreamMessage> for SimpleOrderBook {
-    fn from(msg: BookDepthStreamMessage) -> Self {
+impl From<BookStreamMessage> for SimpleOrderBook {
+    fn from(msg: BookStreamMessage) -> Self {
         SimpleOrderBook {
             bids: msg.bids.into_iter().map(Into::into).collect(),
             asks: msg.asks.into_iter().map(Into::into).collect(),
@@ -138,8 +54,8 @@ impl ExchangeConnection for BinanceConnection {
                 .map::<Result<SimpleOrderBook, Self::Err>, _>(|maybe_message| {
                     // just pass errors along
                     let message = maybe_message?.into_text()?;
-                    let bdsm: BookDepthStreamMessage = serde_json::from_str(&message)?;
-                    Ok(bdsm.into())
+                    let bsm: BookStreamMessage = serde_json::from_str(&message)?;
+                    Ok(bsm.into())
                 })
                 .map_err(Into::into),
         ))

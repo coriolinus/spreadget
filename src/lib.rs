@@ -1,4 +1,8 @@
 pub mod binance;
+pub mod bitstamp;
+
+mod anonymous_level;
+pub use anonymous_level::AnonymousLevel;
 
 use tonic::{Request, Response, Status};
 
@@ -18,11 +22,6 @@ impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregator {
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
         todo!()
     }
-}
-
-pub struct AnonymousLevel {
-    pub price: f64,
-    pub amount: f64,
 }
 
 pub struct SimpleOrderBook {
