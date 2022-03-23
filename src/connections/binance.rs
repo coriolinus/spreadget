@@ -18,6 +18,8 @@ use super::ExchangeConnection;
 use crate::{AnonymousLevel, SimpleOrderBook};
 use futures::{StreamExt, TryStreamExt};
 
+const EXCHANGE_NAME: &'static str = "binance";
+
 /// Message type for Binance partial book stream.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,20 +43,27 @@ pub struct BinanceConnection;
 
 #[tonic::async_trait]
 impl ExchangeConnection for BinanceConnection {
-    const EXCHANGE_NAME: &'static str = "binance";
+    fn exchange_name(&self) -> String {
+        EXCHANGE_NAME.into()
+    }
 
-    type Err = Error;
+    fn name_equals(&self, name: &str) -> bool {
+        name == EXCHANGE_NAME
+    }
 
     async fn connect(
+        &self,
         symbol: &str,
-    ) -> Result<Box<dyn futures::Stream<Item = Result<SimpleOrderBook, Self::Err>>>, Self::Err>
-    {
+    ) -> Result<
+        Box<dyn futures::Stream<Item = Result<SimpleOrderBook, Box<dyn std::error::Error>>>>,
+        Box<dyn std::error::Error>,
+    > {
         let endpoint = format!("wss://stream.binance.com:9443/ws/{symbol}@depth20@100ms");
         let (stream, _response) = tokio_tungstenite::connect_async(&endpoint).await?;
 
         Ok(Box::new(
             stream
-                .map::<Result<SimpleOrderBook, Self::Err>, _>(|maybe_message| {
+                .map::<Result<SimpleOrderBook, Error>, _>(|maybe_message| {
                     // just pass errors along
                     let message_text = maybe_message?.into_text()?;
                     let message: Message = serde_json::from_str(&message_text)?;
