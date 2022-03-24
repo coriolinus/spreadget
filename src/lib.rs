@@ -29,6 +29,7 @@ pub struct SimpleOrderBook {
 #[derive(Debug, Default)]
 pub struct OrderbookAggregator {
     summary: Summary,
+    rx: Option<watch::Receiver<Summary>>,
 }
 
 impl OrderbookAggregator {
@@ -47,16 +48,18 @@ impl OrderbookAggregator {
         symbol: &'static str,
         connections: impl IntoIterator<Item = Box<dyn ExchangeConnection + Sync + Send>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (sender, mut receiver) = mpsc::channel(16);
+        let (orderbook_sender, mut orderbook_receiver) = mpsc::channel(16);
+        let (summary_sender, summary_receiver) = watch::channel(self.summary.clone());
+        self.rx = Some(summary_receiver);
 
         for connection in connections.into_iter() {
-            let sender = sender.clone();
+            let sender = orderbook_sender.clone();
             // TODO: keep track of the join handles returned here, and reconnect on a `ConnectionTerminated` error
             tokio::spawn(async move { connection.connect(symbol, sender).await });
         }
 
         // now pull all the simple order books from the channel and merge them into the aggregate summary.
-        while let Some((name, new_data)) = receiver.recv().await {
+        while let Some((name, new_data)) = orderbook_receiver.recv().await {
             log::info!("aggregator received new order book data from {name}");
 
             // All this vector manipulation is relatively inefficient from a theoretical point of view,
@@ -94,7 +97,9 @@ impl OrderbookAggregator {
                 summary_list.truncate(SUMMARY_BID_ASK_LEN);
             }
 
-            todo!("now notify all grpc streams about the new orderbook data")
+            // This technically returns a result, but we know it will never return an error because
+            // `self.rx` ensures that there always exists at least one receiver.
+            let _ = summary_sender.send(self.summary.clone());
         }
 
         panic!("if we get here all connections were lost and never reconnected");
@@ -111,7 +116,13 @@ impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregator {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
-        todo!()
+        if let Some(rx) = &self.rx {
+            Ok(Response::new(BookSummaryStream { rx: rx.clone() }))
+        } else {
+            Err(Status::unavailable(
+                "aggregator has not yet begun to aggregate",
+            ))
+        }
     }
 }
 
