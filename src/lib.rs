@@ -9,7 +9,9 @@ pub use anonymous_level::AnonymousLevel;
 
 use connections::ExchangeConnection;
 use float_ord::FloatOrd;
-use tokio::sync::mpsc::channel;
+use futures::Stream;
+use std::task::Poll;
+use tokio::sync::{mpsc, watch};
 use tonic::{Request, Response, Status};
 
 tonic::include_proto!("orderbook");
@@ -45,7 +47,7 @@ impl OrderbookAggregator {
         symbol: &'static str,
         connections: impl IntoIterator<Item = Box<dyn ExchangeConnection + Sync + Send>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (sender, mut receiver) = channel(16);
+        let (sender, mut receiver) = mpsc::channel(16);
 
         for connection in connections.into_iter() {
             let sender = sender.clone();
@@ -99,15 +101,42 @@ impl OrderbookAggregator {
     }
 }
 
+pub type SummaryResult = Result<Summary, Status>;
+
 #[tonic::async_trait]
 impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregator {
-    // TODO! we need a real type here
-    type BookSummaryStream = futures::stream::Empty<Result<Summary, Status>>;
+    type BookSummaryStream = BookSummaryStream;
 
     async fn book_summary(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
         todo!()
+    }
+}
+
+/// Implementation of a stream of book summaries as demanded by the [`OrderbookAggregator`][`orderbook_aggregator_server::OrderbookAggregator`].
+pub struct BookSummaryStream {
+    rx: watch::Receiver<Summary>,
+}
+
+impl Stream for BookSummaryStream {
+    type Item = SummaryResult;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        match self.rx.has_changed() {
+            // There is a new result.
+            Ok(true) => {
+                let result = self.rx.borrow_and_update().clone();
+                Poll::Ready(Some(Ok(result)))
+            }
+            // There is not a new result.
+            Ok(false) => Poll::Pending,
+            // The sender has closed, probably; indicate that the receiver should disconnect.
+            Err(_) => Poll::Ready(None),
+        }
     }
 }
