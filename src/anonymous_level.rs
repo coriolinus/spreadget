@@ -3,10 +3,21 @@ use serde::{
     Deserialize,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct AnonymousLevel {
     pub price: f64,
     pub amount: f64,
+}
+
+impl AnonymousLevel {
+    pub fn associate(self, exchange: String) -> crate::Level {
+        let Self { price, amount } = self;
+        crate::Level {
+            exchange,
+            price,
+            amount,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for AnonymousLevel {
