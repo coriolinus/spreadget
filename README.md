@@ -26,4 +26,16 @@
 ## Logging
 
 This program logs events of interest, as configured by [`env_logger`](https://docs.rs/env_logger/latest/env_logger/). See that documentation
-for examples of how to configure the log filters.
+for examples of how to configure the log filters. For basic use sufficient to see incoming order books, use
+
+```text
+$ RUST_LOG=info cargo run --
+...
+[2022-03-24T20:40:56Z INFO  spreadget] aggregator received new order book data from binance
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from binance
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from binance
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from binance
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from bitstamp
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from binance
+[2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from bitstamp
+```

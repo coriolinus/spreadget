@@ -34,8 +34,8 @@ struct Message {
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Data {
-    _timestamp: u64,
-    _microtimestamp: u64,
+    _timestamp: String,
+    _microtimestamp: String,
     bids: Vec<AnonymousLevel>,
     asks: Vec<AnonymousLevel>,
 }
@@ -61,6 +61,8 @@ impl ExchangeConnection for BitstampConnection {
         symbol: String,
         updates: Sender<(&'static str, SimpleOrderBook)>,
     ) -> Result<(), Box<dyn 'static + std::error::Error + Send>> {
+        log::trace!("[{EXCHANGE_NAME}] entered `connect` for {symbol}");
+
         let endpoint = "wss://ws.bitstamp.net";
         let (mut stream, _response) = tokio_tungstenite::connect_async(endpoint)
             .await

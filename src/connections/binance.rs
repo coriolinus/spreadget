@@ -52,6 +52,8 @@ impl ExchangeConnection for BinanceConnection {
         symbol: String,
         updates: Sender<(&'static str, SimpleOrderBook)>,
     ) -> Result<(), Box<dyn 'static + std::error::Error + Send>> {
+        log::trace!("[{EXCHANGE_NAME}] entered `connect` for {symbol}");
+
         let endpoint = format!("wss://stream.binance.com:9443/ws/{symbol}@depth20@100ms");
         let (mut stream, _response) =
             tokio_tungstenite::connect_async(&endpoint)

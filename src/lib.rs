@@ -9,9 +9,12 @@ pub use anonymous_level::AnonymousLevel;
 
 use connections::ExchangeConnection;
 use float_ord::FloatOrd;
-use futures::Stream;
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use std::task::Poll;
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tonic::{Request, Response, Status};
 
 tonic::include_proto!("orderbook");
@@ -23,6 +26,48 @@ const SUMMARY_BID_ASK_LEN: usize = 10;
 pub struct SimpleOrderBook {
     pub bids: Vec<AnonymousLevel>,
     pub asks: Vec<AnonymousLevel>,
+}
+
+async fn handle_join_handles(
+    mut join_handles: FuturesUnordered<
+        JoinHandle<Result<(), Box<dyn 'static + std::error::Error + Send>>>,
+    >,
+) {
+    log::trace!(
+        "entered `handle_join_handles` with {} join handles",
+        join_handles.len()
+    );
+
+    loop {
+        match join_handles.next().await {
+            None => {
+                log::info!("no more join handles to manage; exiting `handle_join_handles`");
+                break;
+            }
+            Some(Err(join_error)) => {
+                log::error!("task joined with join error: {join_error}");
+            }
+            Some(Ok(Err(task_error))) => {
+                // let's get the whole error chain compacted into one message
+                let mut error = &*task_error as &(dyn std::error::Error);
+                let mut message =
+                    format!("task joined successfully with an error result: {task_error}");
+                while let Some(cause) = error.source() {
+                    error = cause;
+                    message += &format!(": {error}");
+                }
+                log::error!("{message}");
+
+                // If we've exited with an error condition, clean up all the other tasks instead of letting
+                // the system run with an incomplete set of connections. This forces a restart of the entire
+                // system by some external user.
+                for handle in join_handles.iter() {
+                    handle.abort();
+                }
+            }
+            Some(Ok(Ok(()))) => log::trace!("task joined successfully with successful result"),
+        }
+    }
 }
 
 /// Aggregate the order books of several exchanges into the best bids and asks from each combined.
@@ -48,16 +93,24 @@ impl OrderbookAggregator {
         symbol: &str,
         connections: impl IntoIterator<Item = Box<dyn ExchangeConnection + Sync + Send>>,
     ) {
+        log::trace!("entered `aggregate_orderbooks` for {symbol}");
+
         let (orderbook_sender, mut orderbook_receiver) = mpsc::channel(16);
         let (summary_sender, summary_receiver) = watch::channel(self.summary.clone());
         self.rx = Some(summary_receiver);
 
+        let join_handles = FuturesUnordered::new();
+
         for connection in connections.into_iter() {
             let symbol = symbol.to_string();
             let sender = orderbook_sender.clone();
-            // TODO: keep track of the join handles returned here, and reconnect on a `ConnectionTerminated` error
-            tokio::spawn(async move { connection.connect(symbol, sender).await });
+
+            join_handles.push(tokio::spawn(async move {
+                connection.connect(symbol, sender).await
+            }));
         }
+
+        tokio::spawn(handle_join_handles(join_handles));
 
         // now pull all the simple order books from the channel and merge them into the aggregate summary.
         while let Some((name, new_data)) = orderbook_receiver.recv().await {
@@ -93,6 +146,7 @@ impl OrderbookAggregator {
             } else {
                 self.summary.spread = self.summary.asks[0].amount - self.summary.bids[0].amount;
             }
+            log::debug!("computed new spread: {:.6}", self.summary.spread);
 
             for summary_list in [&mut self.summary.bids, &mut self.summary.asks] {
                 summary_list.truncate(SUMMARY_BID_ASK_LEN);

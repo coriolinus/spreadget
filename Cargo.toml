@@ -14,7 +14,7 @@ serde_json = "1.0.79"
 structopt = "0.3.26"
 thiserror = "1.0.30"
 tokio = {version = "1.17.0", features = ["full"]}
-tokio-tungstenite = "0.17.1"
+tokio-tungstenite = {version = "0.17.1", features = ["rustls-tls-webpki-roots"]}
 tonic = "0.6.2"
 
 [build-dependencies]
