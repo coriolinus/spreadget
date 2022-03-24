@@ -1,4 +1,4 @@
-//! Connection implementation for bitstamp.
+//! Connection implementation for Bitstamp.
 //!
 //! The bitsteamp websocket endpoint requires a two-step connection protocol:
 //! first connect to the general-purpose endpoint, then register for the desired

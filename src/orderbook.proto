@@ -6,14 +6,24 @@ service OrderbookAggregator {
     rpc BookSummary(Empty) returns (stream Summary);
 }
 
+// The unit struct.
+//
+// This exists instead of using `()` because the `orderbook_aggregator_*`
+// modules are defined automatically by [Tonic][1] from a [protobuf][2]
+// file, and protobuf is not aware of Rust idioms like the unit struct.
+//
+// [1]: https://github.com/hyperium/tonic
+// [2]: https://developers.google.com/protocol-buffers
 message Empty {}
 
+// The top ten bids and asks across several exchanges.
 message Summary {
     double spread = 1;
     repeated Level bids = 2;
     repeated Level asks = 3;
 }
 
+// An offer to buy or sell something on a particular exchange.
 message Level {
     string exchange = 1;
     double price = 2;

@@ -1,3 +1,7 @@
+//! Get the best bids and asks from several exchanges, aggregate them, and select the best.
+//!
+//! The entry point for this module is [`OrderbookAggregator`].
+
 pub mod connections;
 
 mod anonymous_level;
@@ -13,11 +17,13 @@ tonic::include_proto!("orderbook");
 /// The instructions specify that the summary keeps track of only the best 10 bids/asks.
 const SUMMARY_BID_ASK_LEN: usize = 10;
 
+/// The simplest representation of an exchange's order book.
 pub struct SimpleOrderBook {
     pub bids: Vec<AnonymousLevel>,
     pub asks: Vec<AnonymousLevel>,
 }
 
+/// Aggregate the order books of several exchanges into the best bids and asks from each combined.
 #[derive(Debug, Default)]
 pub struct OrderbookAggregator {
     summary: Summary,

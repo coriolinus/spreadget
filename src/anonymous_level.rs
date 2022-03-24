@@ -3,6 +3,10 @@ use serde::{
     Deserialize,
 };
 
+/// An offer to buy or sell something in a given price and quantity.
+///
+/// Differs from [`Level`][crate::Level] in that it does not indicate
+/// the exchange on which the offer is made.
 #[derive(Debug, Clone, Copy)]
 pub struct AnonymousLevel {
     pub price: f64,
@@ -10,6 +14,7 @@ pub struct AnonymousLevel {
 }
 
 impl AnonymousLevel {
+    /// Turn this into a [`Level`][`crate::Level`] by annotating the exchange.
     pub fn associate(self, exchange: String) -> crate::Level {
         let Self { price, amount } = self;
         crate::Level {
