@@ -136,17 +136,22 @@ impl OrderbookAggregator {
             // bids get reverse-sorted because the highest bid is the best
             self.summary
                 .bids
-                .sort_unstable_by_key(|level| std::cmp::Reverse(FloatOrd(level.amount)));
+                .sort_unstable_by_key(|level| std::cmp::Reverse(FloatOrd(level.price)));
             self.summary
                 .asks
-                .sort_unstable_by_key(|level| FloatOrd(level.amount));
+                .sort_unstable_by_key(|level| FloatOrd(level.price));
 
             if self.summary.bids.is_empty() || self.summary.asks.is_empty() {
                 self.summary.spread = 0.0;
             } else {
-                self.summary.spread = self.summary.asks[0].amount - self.summary.bids[0].amount;
+                self.summary.spread = self.summary.asks[0].price - self.summary.bids[0].price;
             }
-            log::debug!("computed new spread: {:.6}", self.summary.spread);
+            log::debug!(
+                "computed new spread: {:.10} ({:?} - {:?})",
+                self.summary.spread,
+                self.summary.asks[0],
+                self.summary.bids[0],
+            );
 
             for summary_list in [&mut self.summary.bids, &mut self.summary.asks] {
                 summary_list.truncate(SUMMARY_BID_ASK_LEN);
