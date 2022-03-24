@@ -58,7 +58,7 @@ impl ExchangeConnection for BitstampConnection {
 
     async fn connect(
         &self,
-        symbol: &str,
+        symbol: String,
         updates: Sender<(&'static str, SimpleOrderBook)>,
     ) -> Result<(), Box<dyn 'static + std::error::Error + Send>> {
         let endpoint = "wss://ws.bitstamp.net";

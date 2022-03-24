@@ -45,14 +45,15 @@ impl OrderbookAggregator {
     /// `symbol` is the general market symbol we are interested in.
     pub async fn aggregate_orderbooks(
         &mut self,
-        symbol: &'static str,
+        symbol: &str,
         connections: impl IntoIterator<Item = Box<dyn ExchangeConnection + Sync + Send>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) {
         let (orderbook_sender, mut orderbook_receiver) = mpsc::channel(16);
         let (summary_sender, summary_receiver) = watch::channel(self.summary.clone());
         self.rx = Some(summary_receiver);
 
         for connection in connections.into_iter() {
+            let symbol = symbol.to_string();
             let sender = orderbook_sender.clone();
             // TODO: keep track of the join handles returned here, and reconnect on a `ConnectionTerminated` error
             tokio::spawn(async move { connection.connect(symbol, sender).await });

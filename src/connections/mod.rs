@@ -17,7 +17,7 @@ pub trait ExchangeConnection {
     /// for this connection.
     async fn connect(
         &self,
-        symbol: &str,
+        symbol: String,
         updates: Sender<(&'static str, SimpleOrderBook)>,
     ) -> Result<(), Box<dyn 'static + std::error::Error + Send>>;
 }

@@ -49,7 +49,7 @@ impl ExchangeConnection for BinanceConnection {
 
     async fn connect(
         &self,
-        symbol: &str,
+        symbol: String,
         updates: Sender<(&'static str, SimpleOrderBook)>,
     ) -> Result<(), Box<dyn 'static + std::error::Error + Send>> {
         let endpoint = format!("wss://stream.binance.com:9443/ws/{symbol}@depth20@100ms");

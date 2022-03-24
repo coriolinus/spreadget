@@ -22,3 +22,8 @@
 ## TODOS
 
 - [ ] test suite!
+
+## Logging
+
+This program logs events of interest, as configured by [`env_logger`](https://docs.rs/env_logger/latest/env_logger/). See that documentation
+for examples of how to configure the log filters.
