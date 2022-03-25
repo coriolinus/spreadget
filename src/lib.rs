@@ -29,6 +29,13 @@ pub struct SimpleOrderBook {
     pub asks: Vec<AnonymousLevel>,
 }
 
+/// Observe a collection of join handles.
+///
+/// When one joins with a task error, cancel all the others. When all have joined, send a message
+/// on the `joined` channel.
+///
+/// Note that this does not take any particular action if a task concludes with an `Ok` result.
+/// If a task exits in this way, other tasks will continue running.
 async fn handle_join_handles(
     mut join_handles: FuturesUnordered<
         JoinHandle<Result<(), Box<dyn 'static + std::error::Error + Send>>>,
