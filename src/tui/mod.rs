@@ -1,7 +1,7 @@
 mod inputs;
 mod ui;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{cell::RefCell, io::stdout, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tui::{backend::CrosstermBackend, Terminal};
@@ -16,7 +16,10 @@ pub struct App {
 
 impl App {
     fn do_action(&mut self, key: KeyEvent) -> AppReturn {
-        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+        if key.code == KeyCode::Esc
+            || key.code == KeyCode::Char('q')
+            || (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
+        {
             return AppReturn::Exit;
         }
         AppReturn::Nop
