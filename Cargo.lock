@@ -985,6 +985,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util 0.7.0",
  "tonic",
  "tonic-build",
 ]

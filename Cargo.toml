@@ -15,6 +15,7 @@ structopt = "0.3.26"
 thiserror = "1.0.30"
 tokio = {version = "1.17.0", features = ["full"]}
 tokio-tungstenite = {version = "0.17.1", features = ["rustls-tls-webpki-roots"]}
+tokio-util = "0.7.0"
 tonic = "0.6.2"
 
 [build-dependencies]

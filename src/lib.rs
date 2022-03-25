@@ -9,13 +9,14 @@ pub use anonymous_level::AnonymousLevel;
 
 use connections::ExchangeConnection;
 use float_ord::FloatOrd;
-use futures::{stream::FuturesUnordered, Stream, StreamExt};
+use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
 use orderbook_aggregator_server::OrderbookAggregatorServer;
 use std::{net::SocketAddr, task::Poll};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
+use tokio_util::sync::ReusableBoxFuture;
 use tonic::{transport::Server, Request, Response, Status};
 
 tonic::include_proto!("orderbook");
@@ -241,15 +242,40 @@ impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorSer
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
-        Ok(Response::new(BookSummaryStream {
-            rx: self.summary_receiver.clone(),
-        }))
+        Ok(Response::new(BookSummaryStream::new(
+            self.summary_receiver.clone(),
+        )))
     }
 }
 
 /// Implementation of a stream of book summaries as demanded by the [`OrderbookAggregator`][`orderbook_aggregator_server::OrderbookAggregator`].
 pub struct BookSummaryStream {
-    rx: watch::Receiver<Summary>,
+    inner: ReusableBoxFuture<
+        'static,
+        (
+            Result<(), watch::error::RecvError>,
+            watch::Receiver<Summary>,
+        ),
+    >,
+}
+
+impl BookSummaryStream {
+    /// Create a new `BookSummaryStream`.
+    pub fn new(rx: watch::Receiver<Summary>) -> Self {
+        Self {
+            inner: ReusableBoxFuture::new(async move { (Ok(()), rx) }),
+        }
+    }
+}
+
+async fn make_future(
+    mut rx: watch::Receiver<Summary>,
+) -> (
+    Result<(), watch::error::RecvError>,
+    watch::Receiver<Summary>,
+) {
+    let result = rx.changed().await;
+    (result, rx)
 }
 
 impl Stream for BookSummaryStream {
@@ -257,23 +283,19 @@ impl Stream for BookSummaryStream {
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        log::trace!(
-            "BookSummaryStream::poll_next; changed: {:?}",
-            self.rx.has_changed()
-        );
-
-        match self.rx.has_changed() {
-            // There is a new result.
-            Ok(true) => {
-                let result = self.rx.borrow_and_update().clone();
-                Poll::Ready(Some(Ok(result)))
+        let (result, mut rx) = ready!(self.inner.poll(cx));
+        match result {
+            Ok(_) => {
+                let received = rx.borrow_and_update().clone();
+                self.inner.set(make_future(rx));
+                Poll::Ready(Some(Ok(received)))
             }
-            // There is not a new result.
-            Ok(false) => Poll::Pending,
-            // The sender has closed, probably; indicate that the receiver should disconnect.
-            Err(_) => Poll::Ready(None),
+            Err(_) => {
+                self.inner.set(make_future(rx));
+                Poll::Ready(None)
+            }
         }
     }
 }
