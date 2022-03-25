@@ -4,7 +4,9 @@ pub mod bitstamp;
 use crate::SimpleOrderBook;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc::Sender;
-use tokio_tungstenite::tungstenite::error::Error as TungsteniteError;
+use tokio_tungstenite::tungstenite::{
+    error::Error as TungsteniteError, Message as TungsteniteMessage,
+};
 
 #[tonic::async_trait]
 pub trait ExchangeConnection {
@@ -25,13 +27,30 @@ pub trait ExchangeConnection {
 /// Convert a potential tungstenite message into a `SimpleOrderBook`.
 ///
 /// This function mainly exists to simplify the error-handling story.
-pub(crate) fn read_book<Message, Error>(
+///
+/// Certain messages are irrelevant and will be marked as such with the
+/// [`Error::irrelevant`] method. These messages should be discarded by
+/// the caller without breaking the message loop.
+pub(crate) fn read_book<Message, Err>(
     event: Result<tokio_tungstenite::tungstenite::Message, TungsteniteError>,
-) -> Result<SimpleOrderBook, Error>
+) -> Result<SimpleOrderBook, Err>
 where
     Message: Into<SimpleOrderBook> + DeserializeOwned,
-    Error: From<TungsteniteError> + From<serde_json::Error>,
+    Err: Error + From<TungsteniteError> + From<serde_json::Error>,
 {
-    let message: Message = serde_json::from_str(&event?.into_text()?)?;
+    let message = event?;
+    if let TungsteniteMessage::Ping(_) | TungsteniteMessage::Pong(_) = &message {
+        return Err(Error::irrelevant());
+    }
+    log::debug!("{message:?}");
+    let message: Message = serde_json::from_str(&message.into_text()?)?;
     Ok(message.into())
+}
+
+pub trait Error {
+    /// Notify that this particular message can safely be ignored.
+    ///
+    /// This is true most often for `ping` messages, which are automatically responded to by
+    /// the underlying tungstenite library.
+    fn irrelevant() -> Self;
 }

@@ -10,12 +10,13 @@ pub use anonymous_level::AnonymousLevel;
 use connections::ExchangeConnection;
 use float_ord::FloatOrd;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
-use std::task::Poll;
+use orderbook_aggregator_server::OrderbookAggregatorServer;
+use std::{net::SocketAddr, task::Poll};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
-use tonic::{Request, Response, Status};
+use tonic::{transport::Server, Request, Response, Status};
 
 tonic::include_proto!("orderbook");
 
@@ -32,6 +33,7 @@ async fn handle_join_handles(
     mut join_handles: FuturesUnordered<
         JoinHandle<Result<(), Box<dyn 'static + std::error::Error + Send>>>,
     >,
+    joined: oneshot::Sender<()>,
 ) {
     log::trace!(
         "entered `handle_join_handles` with {} join handles",
@@ -41,11 +43,11 @@ async fn handle_join_handles(
     loop {
         match join_handles.next().await {
             None => {
-                log::info!("no more join handles to manage; exiting `handle_join_handles`");
                 break;
             }
             Some(Err(join_error)) => {
-                log::error!("task joined with join error: {join_error}");
+                // almost every time, this triggers when a task was explicitly aborted
+                log::debug!("task joined with join error: {join_error}");
             }
             Some(Ok(Err(task_error))) => {
                 // let's get the whole error chain compacted into one message
@@ -68,19 +70,44 @@ async fn handle_join_handles(
             Some(Ok(Ok(()))) => log::trace!("task joined successfully with successful result"),
         }
     }
+
+    // if the send fails then there was no point sending this message anyway, so no issues.
+    let _ = joined.send(());
+    log::debug!("all join handles have been aborted");
 }
 
 /// Aggregate the order books of several exchanges into the best bids and asks from each combined.
-#[derive(Debug, Default)]
+///
+/// In general, the order of operations will be to create the instance with `new`, launch a grpc service (if desired)
+/// with `launch_grpc_service`, and then begin aggregation with `aggregate_orderbooks`.
+#[derive(Debug)]
 pub struct OrderbookAggregator {
     summary: Summary,
-    rx: Option<watch::Receiver<Summary>>,
+    summary_sender: watch::Sender<Summary>,
+    summary_receiver: watch::Receiver<Summary>,
 }
 
 impl OrderbookAggregator {
     /// Create an orderbook aggregator, setting some configuration values.
     pub fn new() -> Self {
-        Self::default()
+        let summary = Summary::default();
+        let (summary_sender, summary_receiver) = watch::channel(summary.clone());
+        Self {
+            summary,
+            summary_sender,
+            summary_receiver,
+        }
+    }
+
+    /// Spawn a new task listening on the specified address and serving gRPC requests, returning immediately.
+    pub fn launch_grpc_service(&self, address: SocketAddr) {
+        let summary_receiver = self.summary_receiver.clone();
+        let service =
+            OrderbookAggregatorServer::new(OrderbookAggregatorService { summary_receiver });
+        tokio::spawn(async move {
+            log::info!("Listening for gRPC connections on {}", address);
+            Server::builder().add_service(service).serve(address).await
+        });
     }
 
     /// Begin aggregating order books.
@@ -96,8 +123,6 @@ impl OrderbookAggregator {
         log::trace!("entered `aggregate_orderbooks` for {symbol}");
 
         let (orderbook_sender, mut orderbook_receiver) = mpsc::channel(16);
-        let (summary_sender, summary_receiver) = watch::channel(self.summary.clone());
-        self.rx = Some(summary_receiver);
 
         let join_handles = FuturesUnordered::new();
 
@@ -110,79 +135,104 @@ impl OrderbookAggregator {
             }));
         }
 
-        tokio::spawn(handle_join_handles(join_handles));
+        let mut is_shutting_down = false;
+        let (joined_tx, mut joined_rx) = oneshot::channel();
+        tokio::spawn(handle_join_handles(join_handles, joined_tx));
 
         // now pull all the simple order books from the channel and merge them into the aggregate summary.
-        while let Some((name, new_data)) = orderbook_receiver.recv().await {
-            log::info!("aggregator received new order book data from {name}");
+        //
+        // this is a loop-select-match construct instead of just `while let Some(...) = orderbook_receiver.recv().await` because
+        // we need the join handle monitor to be able to notify us that it's time to shut down.
+        loop {
+            tokio::select! {
+                // if the join handle monitor indicates that all channels have closed, then we can close the
+                // orderbook receiver for a graceful shutdown.
+                _ = &mut joined_rx, if !is_shutting_down => {
+                    orderbook_receiver.close();
+                    is_shutting_down = true;
+                },
+                // otherwise we're going to wait for the next orderbook
+                maybe_orderbook = orderbook_receiver.recv() => {
+                    match maybe_orderbook {
+                        None => break,
+                        Some((name, new_data)) => {
+                            log::info!("aggregator received new order book data from {name}");
 
-            // All this vector manipulation is relatively inefficient from a theoretical point of view,
-            // but it's my contention that for the number of levels we actually have to keep track of,
-            // we're gaining as much from keeping the cache as we're losing by using linear memory patterns.
+                            // All this vector manipulation is relatively inefficient from a theoretical point of view,
+                            // but it's my contention that for the number of levels we actually have to keep track of,
+                            // we're gaining as much from keeping the cache as we're losing by using linear memory patterns.
 
-            // for both bids and asks, we simply clear out the old data and add the new data.
-            for (summary, new_data) in [
-                (&mut self.summary.bids, new_data.bids),
-                (&mut self.summary.asks, new_data.asks),
-            ] {
-                summary.retain(|level| level.exchange != name);
-                summary.extend(
-                    new_data
-                        .into_iter()
-                        .map(|anonymous_level| anonymous_level.associate(name.to_string())),
-                );
+                            // for both bids and asks, we simply clear out the old data and add the new data.
+                            for (summary, new_data) in [
+                                (&mut self.summary.bids, new_data.bids),
+                                (&mut self.summary.asks, new_data.asks),
+                            ] {
+                                summary.retain(|level| level.exchange != name);
+                                summary.extend(
+                                    new_data
+                                        .into_iter()
+                                        .map(|anonymous_level| anonymous_level.associate(name.to_string())),
+                                );
+                            }
+
+                            // bids get reverse-sorted because the highest bid is the best
+                            self.summary
+                                .bids
+                                .sort_unstable_by_key(|level| std::cmp::Reverse(FloatOrd(level.price)));
+                            self.summary
+                                .asks
+                                .sort_unstable_by_key(|level| FloatOrd(level.price));
+
+                            if self.summary.bids.is_empty() || self.summary.asks.is_empty() {
+                                self.summary.spread = 0.0;
+                            } else {
+                                self.summary.spread = self.summary.asks[0].price - self.summary.bids[0].price;
+                            }
+                            log::debug!(
+                                "computed new spread: {:.10} ({:?} - {:?})",
+                                self.summary.spread,
+                                self.summary.asks[0],
+                                self.summary.bids[0],
+                            );
+
+                            for summary_list in [&mut self.summary.bids, &mut self.summary.asks] {
+                                summary_list.truncate(SUMMARY_BID_ASK_LEN);
+                            }
+
+                            // This technically returns a result, but we know it will never return an error because
+                            // `self.summary_receiver` ensures that there always exists at least one receiver.
+                            self.summary_sender
+                                .send(self.summary.clone())
+                                .expect("there is always at least one receiver");
+                        }
+                    }
+                }
             }
-
-            // bids get reverse-sorted because the highest bid is the best
-            self.summary
-                .bids
-                .sort_unstable_by_key(|level| std::cmp::Reverse(FloatOrd(level.price)));
-            self.summary
-                .asks
-                .sort_unstable_by_key(|level| FloatOrd(level.price));
-
-            if self.summary.bids.is_empty() || self.summary.asks.is_empty() {
-                self.summary.spread = 0.0;
-            } else {
-                self.summary.spread = self.summary.asks[0].price - self.summary.bids[0].price;
-            }
-            log::debug!(
-                "computed new spread: {:.10} ({:?} - {:?})",
-                self.summary.spread,
-                self.summary.asks[0],
-                self.summary.bids[0],
-            );
-
-            for summary_list in [&mut self.summary.bids, &mut self.summary.asks] {
-                summary_list.truncate(SUMMARY_BID_ASK_LEN);
-            }
-
-            // This technically returns a result, but we know it will never return an error because
-            // `self.rx` ensures that there always exists at least one receiver.
-            let _ = summary_sender.send(self.summary.clone());
         }
 
-        panic!("if we get here all connections were lost and never reconnected");
+        log::debug!("`aggregate_orderbooks` going down; no more orderbooks are coming in");
     }
 }
 
 pub type SummaryResult = Result<Summary, Status>;
 
+/// This service can respond to gRPC requests for a book summary stream, and deliver appropriate updates to that stream.
+#[derive(Debug, Clone)]
+pub struct OrderbookAggregatorService {
+    summary_receiver: watch::Receiver<Summary>,
+}
+
 #[tonic::async_trait]
-impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregator {
+impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorService {
     type BookSummaryStream = BookSummaryStream;
 
     async fn book_summary(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
-        if let Some(rx) = &self.rx {
-            Ok(Response::new(BookSummaryStream { rx: rx.clone() }))
-        } else {
-            Err(Status::unavailable(
-                "aggregator has not yet begun to aggregate",
-            ))
-        }
+        Ok(Response::new(BookSummaryStream {
+            rx: self.summary_receiver.clone(),
+        }))
     }
 }
 

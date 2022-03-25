@@ -96,6 +96,9 @@ impl ExchangeConnection for BitstampConnection {
                         return Ok(());
                     }
                 }
+                Err(Error::Irrelevant) => {
+                    // noop, we can just ignore that message
+                }
                 Err(err) => {
                     log::error!("[{EXCHANGE_NAME}] terminating due to error: {err}");
                     return Err(Box::new(err));
@@ -120,6 +123,14 @@ pub enum Error {
     Deserialization(#[from] serde_json::Error),
     #[error("connection dropped by host")]
     ConnectionDropped,
+    #[error("message was irrelevant")]
+    Irrelevant,
+}
+
+impl super::Error for Error {
+    fn irrelevant() -> Self {
+        Error::Irrelevant
+    }
 }
 
 fn into_box(err: impl Into<Error>) -> Box<dyn 'static + std::error::Error + Send> {

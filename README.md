@@ -39,3 +39,20 @@ $ RUST_LOG=info cargo run --
 [2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from binance
 [2022-03-24T20:40:57Z INFO  spreadget] aggregator received new order book data from bitstamp
 ```
+
+## Testing
+
+The simplest way to observe the full system behavior is to use two terminals. In the first, we run `spreadget`:
+
+```bash
+RUST_LOG=info cargo run -- --address '0.0.0.0:54321'
+```
+
+In the second, we can use the [`grpcurl` tool](https://github.com/fullstorydev/grpcurl) to observe the output:
+
+```bash
+grpcurl -plaintext -import-path src -proto orderbook.proto 127.0.0.1:54321 orderbook.OrderbookAggregator/BookSummary
+```
+
+Note that `grpcurl` requires access to the `.proto` definition in order to function properly. If not running from within
+the `spreadget` root directory, adjust the `-import-path` argument appropriately.
