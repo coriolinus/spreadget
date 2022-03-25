@@ -5,13 +5,13 @@ use spreadget::{
     connections::{binance::BinanceConnection, bitstamp::BitstampConnection, ExchangeConnection},
     OrderbookAggregator,
 };
-use std::net::SocketAddr;
+use std::{cell::RefCell, net::SocketAddr, sync::Arc};
 use structopt::StructOpt;
 
 #[cfg(feature = "tui")]
 use tokio::{select, task::JoinError};
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, StructOpt, Clone)]
 struct Options {
     /// Market symbol to examine
     #[structopt(default_value = "ethbtc")]
@@ -66,7 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // aggregator exited; TUI would stop updating if we continued
         }
 
-        _ = if options.tui { Box::pin(tui::launch()) as Pin<Box<dyn Future<Output=Result<(), JoinError>>>> } else { Box::pin(futures::future::pending()) } => {
+        _ = if options.tui {
+            let app = tui::App::from(options.clone());
+            Box::pin(tui::launch(app)) as Pin<Box<dyn Future<Output=Result<Result<(), String>, JoinError>>>>
+        } else { Box::pin(futures::future::pending()) } => {
             // tui exited; aggregator is not needed anymore
         }
     }

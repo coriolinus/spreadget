@@ -55,5 +55,5 @@ the `spreadget` root directory, adjust the `-import-path` argument appropriately
 
 ## TUI
 
-When built with feature `tui` (enabled by default), the executable gains a `--tui` flag. This flag, when set, enables a
+When built with feature `ticker` (enabled by default), the executable gains a `--tui` flag. This flag, when set, enables a
 dashboard which streams the most current summaries via gRPC.
