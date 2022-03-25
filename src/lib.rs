@@ -233,6 +233,8 @@ pub struct OrderbookAggregatorService {
 
 #[tonic::async_trait]
 impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorService {
+    // Ideally we wouldn't have to implement our own `BookSummaryStream`, but would use a standard `WatchStream` instead.
+    // Unfortunately, we can't: `WatchStream` requires that its items are `Clone`, but `Status` isn't, for some reason.
     type BookSummaryStream = BookSummaryStream;
 
     async fn book_summary(
