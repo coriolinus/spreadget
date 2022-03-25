@@ -180,6 +180,7 @@ checksum = "f1fd7173631a4e9e2ca8b32ae2fad58aab9843ea5aaf56642661937d87e28a3e"
 dependencies = [
  "bitflags",
  "crossterm_winapi",
+ "futures-core",
  "libc",
  "mio 0.7.14",
  "parking_lot 0.12.0",
@@ -1080,6 +1081,7 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 name = "spreadget"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "crossterm 0.23.1",
  "env_logger",
  "float-ord",

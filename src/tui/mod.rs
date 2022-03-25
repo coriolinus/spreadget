@@ -1,90 +1,104 @@
-mod inputs;
+mod app;
 mod ui;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::{cell::RefCell, io::stdout, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
-use tui::{backend::CrosstermBackend, Terminal};
+use anyhow::Result;
+use crossterm::{
+    event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use futures::{FutureExt, StreamExt};
+use spreadget::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty};
+use std::{io, time::Duration};
+use tokio::select;
+use tonic::transport::Endpoint;
+use tui::{
+    backend::{Backend, CrosstermBackend},
+    Terminal,
+};
 
-use self::inputs::{Events, InputEvent};
+use crate::{tui::app::App, Options};
 
-/// This application drives a TUI display, pulling data from the gRPC exposed by the underlying service.
-pub struct App {
-    symbol: String,
-    address: SocketAddr,
-}
-
-impl App {
-    fn do_action(&mut self, key: KeyEvent) -> AppReturn {
-        if key.code == KeyCode::Esc
-            || key.code == KeyCode::Char('q')
-            || (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
-        {
-            return AppReturn::Exit;
-        }
-        AppReturn::Nop
-    }
-}
-
-impl From<super::Options> for App {
-    fn from(options: super::Options) -> Self {
-        Self {
-            symbol: options.symbol,
-            address: options.address,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AppReturn {
-    /// No action is required.
-    Nop,
-    /// Exit the application.
-    Exit,
-}
-
-type SharedApp = App;
-
-/// Launch the Text User Interface dashboard.
-///
-/// This spawns a new thread on which the new dashboard will run.
-pub fn launch(app: SharedApp) -> JoinHandle<Result<(), String>> {
-    tokio::task::spawn_blocking(|| tui(app).map_err(|err| err.to_string()))
-}
-
-fn tui(mut app: SharedApp) -> Result<(), Box<dyn std::error::Error>> {
-    // configure crossterm backend for tui
-    let stdout = stdout();
-    crossterm::terminal::enable_raw_mode()?;
+pub(crate) async fn run(options: Options) -> Result<()> {
+    // setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
     terminal.hide_cursor()?;
 
-    let tick_rate = Duration::from_millis(200);
-    let events = Events::new(tick_rate);
+    // create app and run it
+    let app = App::new(options);
+    let res = run_app(&mut terminal, app).await;
 
-    loop {
-        // let app = app.borrow();
-        // render
-        terminal.draw(|rect| ui::draw(rect, &app))?;
+    // restore terminal
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
 
-        let result = match events.next()? {
-            // process user input
-            InputEvent::Input(key) => app.do_action(key),
-            // handle absence of input
-            InputEvent::Tick => todo!(),
-        };
+    res.map_err(Into::into)
+}
 
-        if result == AppReturn::Exit {
+async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
+    // create the event stream which captures keyboard/mouse events
+    let mut event_stream = EventStream::new();
+
+    // connect to the gRPC port which the other half of the system is providing
+    // note that this assumes that that service is listening on a loopback address
+    let endpoint = Endpoint::from_shared(format!("localhost:{}", app.options.address.port()))?
+        .connect_timeout(Duration::from_secs(1));
+    let mut client = None;
+    for _ in 0..5 {
+        client = OrderbookAggregatorClient::connect(endpoint.clone())
+            .await
+            .ok();
+        if client.is_some() {
             break;
         }
     }
+    let mut client = match client {
+        Some(client) => client,
+        None => anyhow::bail!("failed 5x to connect to local gRPC client ({endpoint:?})"),
+    };
+    let mut summary_stream = client.book_summary(Empty {}).await?.into_inner();
 
-    // restore terminal and clean up
-    terminal.clear()?;
-    terminal.show_cursor()?;
-    crossterm::terminal::disable_raw_mode()?;
+    loop {
+        terminal.draw(|f| ui::draw(f, &mut app))?;
+
+        let event = event_stream.next().fuse();
+        let summary = summary_stream.next().fuse();
+
+        select! {
+            maybe_event = event => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        if [
+                            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                            KeyCode::Esc.into(),
+                            KeyCode::Char('q').into()
+                        ].into_iter().map(Event::Key).any(|quit| quit == event) {
+                            app.on_quit_key();
+                        }}
+                    Some(Err(err)) => log::error!("[event] {err}"),
+                    None => break,
+                }
+            }
+            maybe_summary = summary => {
+                match maybe_summary {
+                    Some(Ok(summary)) => {
+                        app.on_new_summary(summary);
+                    }
+                    Some(Err(err)) => log::error!("[summary] {err}"),
+                    None => break,
+                }
+            }
+        }
+
+        if app.should_quit {
+            break;
+        }
+    }
 
     Ok(())
 }

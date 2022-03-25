@@ -1,11 +1,12 @@
 #[cfg(feature = "tui")]
 mod tui;
 
+use anyhow::Result;
 use spreadget::{
     connections::{binance::BinanceConnection, bitstamp::BitstampConnection, ExchangeConnection},
     OrderbookAggregator,
 };
-use std::{cell::RefCell, net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[cfg(feature = "tui")]
@@ -28,7 +29,7 @@ struct Options {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let options = Options::from_args();
 
     #[cfg(not(feature = "tui"))]
@@ -67,10 +68,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         _ = if options.tui {
-            let app = tui::App::from(options.clone());
-            Box::pin(tui::launch(app)) as Pin<Box<dyn Future<Output=Result<Result<(), String>, JoinError>>>>
-        } else { Box::pin(futures::future::pending()) } => {
-            // tui exited; aggregator is not needed anymore
+            // run the TUI here in a future which completes when it exits
+            Box::pin(tokio::spawn(tui::run(options.clone()))) as Pin<Box<dyn Future<Output = std::result::Result<Result<()>, JoinError>>>>
+        } else {
+            // this will never exit
+            Box::pin(futures::future::pending())
+        } => {
         }
     }
 
