@@ -259,6 +259,11 @@ impl Stream for BookSummaryStream {
         mut self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        log::trace!(
+            "BookSummaryStream::poll_next; changed: {:?}",
+            self.rx.has_changed()
+        );
+
         match self.rx.has_changed() {
             // There is a new result.
             Ok(true) => {
