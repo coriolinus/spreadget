@@ -9,14 +9,14 @@ pub use anonymous_level::AnonymousLevel;
 
 use connections::ExchangeConnection;
 use float_ord::FloatOrd;
-use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use orderbook_aggregator_server::OrderbookAggregatorServer;
-use std::{net::SocketAddr, task::Poll};
+use std::{net::SocketAddr, pin::Pin};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
-use tokio_util::sync::ReusableBoxFuture;
+use tokio_stream::wrappers::WatchStream;
 use tonic::{transport::Server, Request, Response, Status};
 
 tonic::include_proto!("orderbook");
@@ -234,68 +234,14 @@ pub struct OrderbookAggregatorService {
 
 #[tonic::async_trait]
 impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorService {
-    // Ideally we wouldn't have to implement our own `BookSummaryStream`, but would use a standard `WatchStream` instead.
-    // Unfortunately, we can't: `WatchStream` requires that its items are `Clone`, but `Status` isn't, for some reason.
-    type BookSummaryStream = BookSummaryStream;
+    type BookSummaryStream = Pin<Box<dyn Stream<Item = SummaryResult> + Send>>;
 
     async fn book_summary(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::BookSummaryStream>, Status> {
-        Ok(Response::new(BookSummaryStream::new(
-            self.summary_receiver.clone(),
+        Ok(Response::new(Box::pin(
+            WatchStream::new(self.summary_receiver.clone()).map(|summary| Ok(summary)),
         )))
-    }
-}
-
-/// Implementation of a stream of book summaries as demanded by the [`OrderbookAggregator`][`orderbook_aggregator_server::OrderbookAggregator`].
-pub struct BookSummaryStream {
-    inner: ReusableBoxFuture<
-        'static,
-        (
-            Result<(), watch::error::RecvError>,
-            watch::Receiver<Summary>,
-        ),
-    >,
-}
-
-impl BookSummaryStream {
-    /// Create a new `BookSummaryStream`.
-    pub fn new(rx: watch::Receiver<Summary>) -> Self {
-        Self {
-            inner: ReusableBoxFuture::new(async move { (Ok(()), rx) }),
-        }
-    }
-}
-
-async fn make_future(
-    mut rx: watch::Receiver<Summary>,
-) -> (
-    Result<(), watch::error::RecvError>,
-    watch::Receiver<Summary>,
-) {
-    let result = rx.changed().await;
-    (result, rx)
-}
-
-impl Stream for BookSummaryStream {
-    type Item = SummaryResult;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let (result, mut rx) = ready!(self.inner.poll(cx));
-        match result {
-            Ok(_) => {
-                let received = rx.borrow_and_update().clone();
-                self.inner.set(make_future(rx));
-                Poll::Ready(Some(Ok(received)))
-            }
-            Err(_) => {
-                self.inner.set(make_future(rx));
-                Poll::Ready(None)
-            }
-        }
     }
 }

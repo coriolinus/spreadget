@@ -984,6 +984,7 @@ dependencies = [
  "structopt",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite",
  "tokio-util 0.7.0",
  "tonic",
@@ -1159,6 +1160,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util 0.6.9",
 ]
 
 [[package]]
