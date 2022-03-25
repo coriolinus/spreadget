@@ -19,10 +19,6 @@
 - Example API feed: <https://www.bitstamp.net/api/v2/order_book/ethbtc/>
 - Example Websocket usage: <https://www.bitstamp.net/s/webapp/examples/order_book_v2.html>
 
-## TODOS
-
-- [ ] test suite!
-
 ## Logging
 
 This program logs events of interest, as configured by [`env_logger`](https://docs.rs/env_logger/latest/env_logger/). See that documentation
