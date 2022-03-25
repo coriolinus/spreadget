@@ -52,3 +52,8 @@ grpcurl -plaintext -import-path src -proto orderbook.proto 127.0.0.1:54321 order
 
 Note that `grpcurl` requires access to the `.proto` definition in order to function properly. If not running from within
 the `spreadget` root directory, adjust the `-import-path` argument appropriately.
+
+## TUI
+
+When built with feature `tui` (enabled by default), the executable gains a `--tui` flag. This flag, when set, enables a
+dashboard which streams the most current summaries via gRPC.
