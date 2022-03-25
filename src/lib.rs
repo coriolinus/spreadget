@@ -95,7 +95,7 @@ pub struct OrderbookAggregator {
 }
 
 impl OrderbookAggregator {
-    /// Create an orderbook aggregator, setting some configuration values.
+    /// Create an orderbook aggregator.
     pub fn new() -> Self {
         let summary = Summary::default();
         let (summary_sender, summary_receiver) = watch::channel(summary.clone());
@@ -183,12 +183,14 @@ impl OrderbookAggregator {
                             }
 
                             // bids get reverse-sorted because the highest bid is the best
-                            self.summary
-                                .bids
-                                .sort_unstable_by_key(|level| std::cmp::Reverse(FloatOrd(level.price)));
-                            self.summary
-                                .asks
-                                .sort_unstable_by_key(|level| FloatOrd(level.price));
+                            // both bids and asks sort primarily by price, but secondarily by larger quantity
+                            self.summary.bids.sort_unstable_by(|left, right|
+                                FloatOrd(left.price).cmp(&FloatOrd(right.price))
+                                    .reverse()
+                                    .then_with(|| FloatOrd(left.amount).cmp(&FloatOrd(right.amount)).reverse()));
+                            self.summary.asks.sort_unstable_by(|left, right|
+                                FloatOrd(left.price).cmp(&FloatOrd(right.price))
+                                    .then_with(|| FloatOrd(left.amount).cmp(&FloatOrd(right.amount)).reverse()));
 
                             if self.summary.bids.is_empty() || self.summary.asks.is_empty() {
                                 self.summary.spread = 0.0;
