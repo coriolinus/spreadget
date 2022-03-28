@@ -57,3 +57,6 @@ the `spreadget` root directory, adjust the `-import-path` argument appropriately
 
 When built with feature `ticker` (enabled by default), the executable gains a `--tui` flag. This flag, when set, enables a
 dashboard which streams the most current summaries via gRPC.
+
+![image](https://user-images.githubusercontent.com/7822926/160366547-41071f08-4215-4246-9f27-e1a593ca8dde.png)
+
