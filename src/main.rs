@@ -20,7 +20,7 @@ struct Options {
     symbol: String,
 
     /// Address on which to serve gRPC streams of order books
-    #[structopt(short, long, default_value = "[::1]:54321")]
+    #[structopt(short, long, default_value = "0.0.0.0:54321")]
     address: SocketAddr,
 
     /// Run a TUI dashboard instead of showing log output
