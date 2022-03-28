@@ -30,6 +30,16 @@ pub struct SimpleOrderBook {
     pub asks: Vec<AnonymousLevel>,
 }
 
+/// Concatenate an error and all its sources into a colon-separated string.
+pub fn concatenate_errors(mut err: &dyn std::error::Error) -> String {
+    let mut message = err.to_string();
+    while let Some(source) = err.source() {
+        err = source;
+        message.push_str(&format!(": {err}"));
+    }
+    message
+}
+
 /// Observe a collection of join handles.
 ///
 /// When one joins with a task error, cancel all the others. When all have joined, send a message
@@ -59,13 +69,10 @@ async fn handle_join_handles(
             }
             Some(Ok(Err(task_error))) => {
                 // let's get the whole error chain compacted into one message
-                let mut error = &*task_error as &(dyn std::error::Error);
-                let mut message =
-                    format!("task joined successfully with an error result: {task_error}");
-                while let Some(cause) = error.source() {
-                    error = cause;
-                    message += &format!(": {error}");
-                }
+                let message = format!(
+                    "task joined successfully with an error result: {}",
+                    concatenate_errors(&*task_error)
+                );
                 log::error!("{message}");
 
                 // If we've exited with an error condition, clean up all the other tasks instead of letting
