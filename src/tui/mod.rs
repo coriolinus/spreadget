@@ -8,9 +8,11 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::{FutureExt, StreamExt};
-use spreadget::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty};
+use spreadget::{
+    concatenate_errors, orderbook_aggregator_client::OrderbookAggregatorClient, Empty,
+};
 use std::{io, time::Duration};
-use tokio::select;
+use tokio::{select, time::sleep};
 use tonic::transport::Endpoint;
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -46,20 +48,35 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result
 
     // connect to the gRPC port which the other half of the system is providing
     // note that this assumes that that service is listening on a loopback address
-    let endpoint = Endpoint::from_shared(format!("localhost:{}", app.options.address.port()))?
-        .connect_timeout(Duration::from_secs(1));
+    let endpoint =
+        Endpoint::from_shared(format!("http://localhost:{}", app.options.address.port()))?
+            .connect_timeout(Duration::from_secs(1));
     let mut client = None;
+    let mut most_recent_connection_err = None;
     for _ in 0..5 {
-        client = OrderbookAggregatorClient::connect(endpoint.clone())
-            .await
-            .ok();
+        client = match OrderbookAggregatorClient::connect(endpoint.clone()).await {
+            Ok(client) => Some(client),
+            Err(err) => {
+                most_recent_connection_err = Some(err);
+                None
+            }
+        };
         if client.is_some() {
             break;
         }
+        sleep(Duration::from_secs(1)).await;
     }
     let mut client = match client {
         Some(client) => client,
-        None => anyhow::bail!("failed 5x to connect to local gRPC client ({endpoint:?})"),
+        None => {
+            anyhow::bail!(
+                "failed 5x to connect to local gRPC client ({}): {}",
+                endpoint.uri(),
+                concatenate_errors(
+                    &most_recent_connection_err.expect("this err must be Some if client is None")
+                )
+            )
+        }
     };
     let mut summary_stream = client.book_summary(Empty {}).await?.into_inner();
 

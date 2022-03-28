@@ -3,6 +3,7 @@ mod tui;
 
 use anyhow::Result;
 use spreadget::{
+    concatenate_errors,
     connections::{binance::BinanceConnection, bitstamp::BitstampConnection, ExchangeConnection},
     OrderbookAggregator,
 };
@@ -67,13 +68,16 @@ async fn main() -> Result<()> {
             // aggregator exited; TUI would stop updating if we continued
         }
 
-        _ = if options.tui {
+        output = if options.tui {
             // run the TUI here in a future which completes when it exits
             Box::pin(tokio::spawn(tui::run(options.clone()))) as Pin<Box<dyn Future<Output = std::result::Result<Result<()>, JoinError>>>>
         } else {
             // this will never exit
             Box::pin(futures::future::pending())
         } => {
+            if let Ok(Err(err)) = output {
+                eprintln!("{}", concatenate_errors(&*err));
+            }
         }
     }
 
