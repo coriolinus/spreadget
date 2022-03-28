@@ -5,19 +5,25 @@
 - merge and sort the order books to create a combined order book
 - from the combined book, publish the spread (top 10 bids and asks) as gRPC stream
 
-## Exchanges
+## CLI Interface
 
-### Binance
+```
+spreadget 0.1.0
 
-- Docs for Websocket connection: <https://github.com/binance-exchange/binance-official-api-docs/blob/master/web-socket-streams.md>
-- Example API feed: <https://api.binance.com/api/v3/depth?symbol=ETHBTC>
-- Websocket connection URL for Binance: wss://stream.binance.com:9443/ws/ethbtc@depth20@100ms
+USAGE:
+    spreadget [FLAGS] [OPTIONS] [symbol]
 
-### Bitstamp
+FLAGS:
+    -h, --help       Prints help information
+        --tui        Run a TUI dashboard instead of showing log output
+    -V, --version    Prints version information
 
-- Docs: <https://www.bitstamp.net/websocket/v2/>
-- Example API feed: <https://www.bitstamp.net/api/v2/order_book/ethbtc/>
-- Example Websocket usage: <https://www.bitstamp.net/s/webapp/examples/order_book_v2.html>
+OPTIONS:
+    -a, --address <address>    Address on which to serve gRPC streams of order books [default: 0.0.0.0:54321]
+
+ARGS:
+    <symbol>    Market symbol to examine [default: ethbtc]
+```
 
 ## Logging
 
@@ -59,4 +65,3 @@ When built with feature `ticker` (enabled by default), the executable gains a `-
 dashboard which streams the most current summaries via gRPC.
 
 ![image](https://user-images.githubusercontent.com/7822926/160366547-41071f08-4215-4246-9f27-e1a593ca8dde.png)
-
