@@ -14,7 +14,8 @@ pub(crate) fn draw<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         .constraints(
             [
                 Constraint::Length(3),
-                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(2),
                 Constraint::Min(15),
             ]
             .as_ref(),
@@ -22,7 +23,7 @@ pub(crate) fn draw<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         .split(frame.size());
 
     let symbol_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
-    let addr_style = Style::default().fg(Color::Gray);
+    let addr_style = Style::default().fg(Color::DarkGray);
 
     let title_text = Spans::from(vec![
         Span::styled(app.options.symbol.clone(), symbol_style),
@@ -41,6 +42,9 @@ pub(crate) fn draw<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
         );
     frame.render_widget(title, chunks[0]);
 
+    let padding = Paragraph::new("").style(Style::default().bg(Color::White));
+    frame.render_widget(padding, chunks[1]);
+
     let spread_text = Spans::from(vec![
         Span::raw("Spread: "),
         Span::styled(
@@ -51,12 +55,12 @@ pub(crate) fn draw<B: Backend>(frame: &mut Frame<B>, app: &mut App) {
     let spread = Paragraph::new(spread_text)
         .style(Style::default().fg(Color::Black).bg(Color::White))
         .alignment(Alignment::Left);
-    frame.render_widget(spread, chunks[1]);
+    frame.render_widget(spread, chunks[2]);
 
     let table_halves = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-        .split(chunks[2]);
+        .split(chunks[3]);
     let bids = levels_as_table("Bids", &app.summary.bids);
     frame.render_widget(bids, table_halves[0]);
     let asks = levels_as_table("Asks", &app.summary.asks);
@@ -80,9 +84,9 @@ fn levels_as_table(which: &str, levels: &[Level]) -> Table<'static> {
             .bottom_margin(1),
     )
     .widths(&[
-        Constraint::Min(9),
+        Constraint::Min(11),
         Constraint::Length(1),
-        Constraint::Min(14),
+        Constraint::Min(16),
         Constraint::Min(10),
     ])
     .column_spacing(1)
