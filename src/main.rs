@@ -3,7 +3,6 @@ mod tui;
 
 use anyhow::Result;
 use spreadget::{
-    concatenate_errors,
     connections::{binance::BinanceConnection, bitstamp::BitstampConnection, ExchangeConnection},
     OrderbookAggregator,
 };
@@ -11,7 +10,10 @@ use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[cfg(feature = "tui")]
-use tokio::{select, task::JoinError};
+use {
+    spreadget::concatenate_errors,
+    tokio::{select, task::JoinError},
+};
 
 #[derive(Debug, StructOpt, Clone)]
 struct Options {
